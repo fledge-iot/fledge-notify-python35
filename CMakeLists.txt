@@ -25,12 +25,6 @@ endif()
 # Set plugin type (south, north, filter)
 set(PLUGIN_TYPE "notificationDelivery")
 
-# Fetch OS RELEASE CODENAME (i.e stretch, buster, xenial)
-execute_process(COMMAND lsb_release -cs
-    OUTPUT_VARIABLE RELEASE_CODENAME
-    OUTPUT_STRIP_TRAILING_WHITESPACE
-)
-
 # Generation version header file
 set_source_files_properties(version.h PROPERTIES GENERATED TRUE)
 add_custom_command(
@@ -89,19 +83,6 @@ if(${CMAKE_VERSION} VERSION_LESS "3.12.0")
     include_directories(${PYTHON_INCLUDE_DIRS})
 else()
     include_directories(${Python_INCLUDE_DIRS})
-endif()
-
-# Pass RELEASE_CODENAME to C++ build for "buster" only
-if (RELEASE_CODENAME)
-	if (${RELEASE_CODENAME} MATCHES "buster")
-		if(${CMAKE_VERSION} VERSION_LESS "3.12.0") 
-			add_definitions(-DPLUGIN_PYTHON_SHARED_LIBRARY=lib${PYTHON_LIBRARIES}.so)
-			message(STATUS "Setting -DPYTHON_SHARED_LIBRARY=lib${PYTHON_LIBRARIES}.so for ${CMAKE_SYSTEM} on ${RELEASE_CODENAME}")
-		else()
-			add_definitions(-DPLUGIN_PYTHON_SHARED_LIBRARY=lib${Python_LIBRARIES}.so)
-			message(STATUS "Setting -DPYTHON_SHARED_LIBRARY=lib${Python_LIBRARIES}.so for ${CMAKE_SYSTEM} on ${RELEASE_CODENAME}")
-		endif()
-	endif()
 endif()
 
 if(${CMAKE_VERSION} VERSION_LESS "3.12.0") 
