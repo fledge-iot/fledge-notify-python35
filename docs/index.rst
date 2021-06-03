@@ -1,10 +1,10 @@
 .. Images
 .. |python_1| image:: images/python_1.jpg
 
-Python 3.5 Script
-=================
+Python 3 Script
+===============
 
-The *fledge-notify-python35* notification delivery plugin allows a user supplied Python script to be executed when a notification is triggered or cleared. The script should be written in Python 3.5 syntax.
+The *fledge-notify-python35* notification delivery plugin allows a user supplied Python script to be executed when a notification is triggered or cleared. The script should be written in Python 3 syntax.
 
 A Python script should be provided in the form of a function, the name of that function should match the name of the file the code is loaded form. E.g if you have a script to run which you have saved in a file called alert_light.py it should contain a function alert_light. ~that function is called with a message which is defined in notification itself as a simple string.
 
