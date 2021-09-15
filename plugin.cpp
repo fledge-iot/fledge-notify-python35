@@ -41,7 +41,7 @@ static void* libpython_handle = NULL;
 
 
 // Delivery plugin default configuration
-const char *default_config = QUOTE({
+static const char *default_config = QUOTE({
 	"plugin" : {
 	       	"description" : "Python 3.5 notification plugin",
 		"type" : "string",
