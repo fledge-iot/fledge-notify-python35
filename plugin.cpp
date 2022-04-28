@@ -17,13 +17,9 @@
 #include <iostream>
 #include <reading_set.h>
 #include <utils.h>
-
-#include <Python.h>
 #include <version.h>
-
+#include <pyruntime.h>
 #include "notify_python35.h"
-
-static void* libpython_handle = NULL;
 
 /**
  * The Python 3.5 script module to load is set in
@@ -113,43 +109,9 @@ PLUGIN_HANDLE plugin_init(ConfigCategory* config)
         Py_SetProgramName(programName);
 	PyMem_RawFree(programName);
 
-	// Embedded Python 3.5 initialisation
-	// Check first the interpreter is already set
-	if (!Py_IsInitialized())
-	{
-#ifdef PLUGIN_PYTHON_SHARED_LIBRARY
-		string openLibrary = TO_STRING(PLUGIN_PYTHON_SHARED_LIBRARY);
-		if (!openLibrary.empty())
-		{
-			libpython_handle = dlopen(openLibrary.c_str(),
-						  RTLD_LAZY | RTLD_GLOBAL);
-			if (libpython_handle)
-			{
-				Logger::getLogger()->info("Pre-loading of library '%s' "
-							  "is needed on this system",
-							  openLibrary.c_str());
-			}
-			else
-			{
-				Logger::getLogger()->fatal("Error while pre-loading of library '%s': %s",
-							   openLibrary.c_str(),
-							   dlerror());
-				// Free object
-				delete notify;
-				return NULL;
-			}
-		}
-#endif
-		Py_Initialize();
-		PyEval_InitThreads(); // Initialize and acquire the global interpreter lock (GIL)
-		PyThreadState* save = PyEval_SaveThread(); // release GIL
-		notify->m_init = true;
 
-		Logger::getLogger()->debug("Python interpteter is being initialised by "
-					   "delivery plugin (%s), name %s",
-					   PLUGIN_NAME,
-					   config->getName().c_str());
-	}
+	// Embedded Python 3.5 initialisation
+	PythonRuntime::getPythonRuntime();
 
 	PyGILState_STATE state = PyGILState_Ensure(); // acquire GIL
 
@@ -183,11 +145,6 @@ PLUGIN_HANDLE plugin_init(ConfigCategory* config)
 		if (notify->m_init)
 		{
 			notify->m_init = false;
-
-			if (libpython_handle)
-			{
-				dlclose(libpython_handle);
-			}
 		}
 
 		// Free object
@@ -241,28 +198,16 @@ void plugin_shutdown(PLUGIN_HANDLE *handle)
 {
 	NotifyPython35* notify = (NotifyPython35 *) handle;
 
-	if (Py_IsInitialized())
-	{
-		PyGILState_STATE state = PyGILState_Ensure();
+	PyGILState_STATE state = PyGILState_Ensure();
 
-		// Decrement pModule reference count
-		Py_CLEAR(notify->m_pModule);
-		// Decrement pFunc reference count
-		Py_CLEAR(notify->m_pFunc);
+	// Decrement pModule reference count
+	Py_CLEAR(notify->m_pModule);
+	// Decrement pFunc reference count
+	Py_CLEAR(notify->m_pFunc);
 
-		PyGILState_Release(state); // release GIL
+	PyGILState_Release(state); // release GIL
 
-		// Cleanup Python 3.5
-		if (notify->m_init)
-		{
-			notify->m_init = false;
-
-			if (libpython_handle)
-			{
-				dlclose(libpython_handle);
-			}
-		}
-	}
+	notify->m_init = false;
 
 	// Cleanup memory
 	delete notify;
