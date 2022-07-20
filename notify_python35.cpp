@@ -14,6 +14,8 @@
 #include <string>
 #include <iostream>
 
+#include <utils.h>
+#include <pyruntime.h>
 #include "notify_python35.h"
 
 #define SCRIPT_NAME  "notify35"
@@ -30,13 +32,16 @@ using namespace std;
  */
 NotifyPython35::NotifyPython35(ConfigCategory *category)
 {
-	m_init = false;
 	m_enabled = false;
 	m_pModule = NULL;
 	m_pFunc = NULL;
 	m_pythonScript = string("");
+	m_failedScript = false;
+	m_execCount = 0;
 
 	m_name = category->getName();
+
+	m_logger = Logger::getLogger();
 
 	// Set the enable flag
 	if (category->itemExists("enable"))
@@ -72,12 +77,12 @@ NotifyPython35::NotifyPython35(ConfigCategory *category)
 
 	if (m_pythonScript.empty())
 	{
-		Logger::getLogger()->warn("Notification plugin '%s', "
-					  "called without a Python 3.5 script. "
-					  "Check 'script' item in '%s' configuration. "
-					  "Notification plugin has been disabled.",
-				 	  PLUGIN_NAME,
-					  this->getName().c_str());
+		m_logger->warn("Notification plugin '%s', "
+				  "called without a Python 3.5 script. "
+				  "Check 'script' item in '%s' configuration. "
+				  "Notification plugin has been disabled.",
+			 	  PLUGIN_NAME,
+				  this->getName().c_str());
 	}
 }
 
@@ -100,6 +105,8 @@ NotifyPython35::~NotifyPython35()
  */
 bool NotifyPython35::configure()
 {
+	m_failedScript = false;
+
 	// Import script as module
 	// NOTE:
 	// Script file name is:
@@ -127,10 +134,10 @@ bool NotifyPython35::configure()
 		m_pythonScript.replace(found, strlen(PYTHON_SCRIPT_FILENAME_EXTENSION), "");
 	}
 
-	Logger::getLogger()->debug("%s delivery plugin: script='%s', method='%s'",
-				   PLUGIN_NAME,
-				   m_pythonScript.c_str(),
-				   filterMethod.c_str());
+	m_logger->debug("%s delivery plugin: script='%s', method='%s'",
+			   PLUGIN_NAME,
+			   m_pythonScript.c_str(),
+			   filterMethod.c_str());
 
 	// 2) Import Python script
 	// check first method name is empty:
@@ -161,12 +168,14 @@ bool NotifyPython35::configure()
 		{
 			logErrorMessage();
 		}
-		Logger::getLogger()->fatal("Notification plugin '%s' (%s), cannot import Python 3.5 script "
-					   "'%s' from '%s'",
-					   PLUGIN_NAME,
-					   this->getName().c_str(),
-					   m_pythonScript.c_str(),
-					   m_scriptsPath.c_str());
+		m_logger->fatal("Notification plugin '%s' (%s), can not import Python 3.5 script "
+				   "'%s' from '%s'",
+				   PLUGIN_NAME,
+				   this->getName().c_str(),
+				   m_pythonScript.c_str(),
+				   m_scriptsPath.c_str());
+
+		m_failedScript = true;
 
 		return false;
 	}
@@ -181,15 +190,17 @@ bool NotifyPython35::configure()
 			logErrorMessage();
 		}
 
-		Logger::getLogger()->fatal("Notification plugin %s (%s) error: cannot "
-					   "find Python 3.5 method "
-					   "'%s' in loaded module '%s.py'",
-					   PLUGIN_NAME,
-					   this->getName().c_str(),
-					   filterMethod.c_str(),
-					   m_pythonScript.c_str());
+		m_logger->fatal("Notification plugin %s (%s) error: cannot "
+				   "find Python 3.5 method "
+				   "'%s' in loaded module '%s.py'",
+				   PLUGIN_NAME,
+				   this->getName().c_str(),
+				   filterMethod.c_str(),
+				   m_pythonScript.c_str());
 		Py_CLEAR(m_pModule);
 		Py_CLEAR(m_pFunc);
+
+		m_failedScript = true;
 
 		return false;
 	}
@@ -204,9 +215,9 @@ bool NotifyPython35::configure()
  */
 bool NotifyPython35::reconfigure(const std::string& newConfig)
 {
-	Logger::getLogger()->debug("%s notification 'plugin_reconfigure' called = %s",
-				   PLUGIN_NAME,
-				   newConfig.c_str());
+	m_logger->debug("%s notification 'plugin_reconfigure' called = %s",
+			   PLUGIN_NAME,
+			   newConfig.c_str());
 
 	ConfigCategory category("new", newConfig);
 	string newScript;
@@ -250,23 +261,28 @@ bool NotifyPython35::reconfigure(const std::string& newConfig)
 
 	if (newScript.empty())
 	{
-		Logger::getLogger()->warn("Notification plugin '%s', "
-					  "called without a Python 3.5 script. "
-					  "Check 'script' item in '%s' configuration. "
-					  "Notification plugin has been disabled.",
-					  PLUGIN_NAME,
-					  this->getName().c_str());
+		m_logger->warn("Notification plugin '%s', "
+				  "called without a Python 3.5 script. "
+				  "Check 'script' item in '%s' configuration. "
+				  "Notification plugin has been disabled.",
+				  PLUGIN_NAME,
+				  this->getName().c_str());
 		// Force disable
 		this->disableDelivery();
 
 		PyGILState_Release(state);
 
+		m_failedScript = true;
+
 		return false;
 	}
 
 	// Reload module or Import module ?
-	if (newScript.compare(m_pythonScript) == 0)
+	if (newScript.compare(m_pythonScript) == 0 && m_pModule)
 	{
+		m_failedScript = false;
+		m_execCount = 0;
+
 		// Reimport module
 		PyObject* newModule = PyImport_ReloadModule(m_pModule);
 		if (newModule)
@@ -286,19 +302,23 @@ bool NotifyPython35::reconfigure(const std::string& newConfig)
 		else
 		{
 			// Errors while reloading the Python module
-			Logger::getLogger()->error("%s notification error while reloading "
-						   " Python script '%s' in 'plugin_reconfigure'",
-						   PLUGIN_NAME,
-						   m_pythonScript.c_str());
+			m_logger->error("%s notification error while reloading "
+					   " Python script '%s' in 'plugin_reconfigure'",
+					   PLUGIN_NAME,
+					   m_pythonScript.c_str());
 			logErrorMessage();
 
 			PyGILState_Release(state);
+
+			m_failedScript = true;
 
 			return false;
 		}
 	}
 	else
 	{
+		m_failedScript = false;
+		m_execCount = 0;
 		// Import the new module
 
 		// Cleanup Loaded module
@@ -331,7 +351,6 @@ bool NotifyPython35::reconfigure(const std::string& newConfig)
 	return ret;
 }
 
-
 /**
  * Call Python 3.5 notification method
  *
@@ -347,11 +366,34 @@ bool NotifyPython35::notify(const std::string& deliveryName,
 	lock_guard<mutex> guard(m_configMutex);
 	bool ret = false;
 
-        if (!m_enabled && !Py_IsInitialized())
+        if (!m_enabled)
         {
                 // Current plugin is not active: just return
                 return false;
         }
+
+	if (m_failedScript)
+	{
+		// Just log once
+		if (m_execCount++ >= MAX_ERRORS_COUNT)
+		{
+			m_logger->warn("The '%s' notification is unable to process data " \
+					"as the supplied Python script '%s' has errors.",
+					m_name.c_str(),
+					m_pythonScript.c_str());
+			// Reset counter
+			m_execCount = 0;
+		}
+		return false;
+	}
+
+	if (! Py_IsInitialized())
+	{
+		m_logger->fatal("The Python environment failed to initialize, " \
+				"the %s notification plugin is unable to process any data",
+				m_name.c_str());
+		return false;
+	}
 
 	PyGILState_STATE state = PyGILState_Ensure();
 
@@ -369,30 +411,90 @@ bool NotifyPython35::notify(const std::string& deliveryName,
 	if (!pReturn)
 	{
 		// Errors while getting result object
-		Logger::getLogger()->error("Notification plugin '%s' (%s), error in script '%s', "
-					   "error",
-					   PLUGIN_NAME,
-					   name.c_str(),
-					   scriptName.c_str());
+		m_logger->error("Notification plugin '%s' (%s), error in script '%s'",
+				   PLUGIN_NAME,
+				   name.c_str(),
+				   scriptName.c_str());
 
 		// Errors while getting result object
 		logErrorMessage();
+
+		// Mark failure to reduce excessive logging
+		m_failedScript = true;
 	}
 	else
 	{
 		ret = true;
-		Logger::getLogger()->debug("PyObject_CallFunction() succeeded");
+		m_logger->debug("PyObject_CallFunction() succeeded");
 
 		// Remove pReturn object
 		Py_CLEAR(pReturn);
 	}
 
-	Logger::getLogger()->debug("Notification '%s' 'plugin_delivery' "
-				   "called, return = %d",
-				   this->getName().c_str(),
-				   ret);
+	m_logger->debug("Notification '%s' 'plugin_delivery' " \
+			   "called, return = %d",
+			   this->getName().c_str(),
+			   ret);
 
 	PyGILState_Release(state);
+
+	return ret;
+}
+
+/**
+ * Shutdown the Python35 notification plugin
+ */
+void NotifyPython35::shutdown()
+{
+	PyGILState_STATE state = PyGILState_Ensure();
+
+	// Decrement pModule reference count
+	Py_CLEAR(m_pModule);
+
+	// Decrement pFunc reference count
+	Py_CLEAR(m_pFunc);
+
+	// Interpreter is still running, just release the GIL
+	PyGILState_Release(state); // release GIL
+}
+
+bool NotifyPython35::init()
+{
+	// Embedded Python 3.5 program name
+	wchar_t *programName = Py_DecodeLocale(m_name.c_str(), NULL);
+	Py_SetProgramName(programName);
+	PyMem_RawFree(programName);
+
+	// Embedded Python 3.5 initialisation
+	PythonRuntime::getPythonRuntime();
+
+	PyGILState_STATE state = PyGILState_Ensure(); // acquire GIL
+
+	// Add scripts dir: pass Fledge Data dir
+	this->setScriptsPath(getDataDir());
+
+	// Set Python path for embedded Python 3.5
+	// Get current sys.path. borrowed reference
+	PyObject* sysPath = PySys_GetObject((char *)string("path").c_str());
+	// Add Fledge python scripts path
+	PyObject* pPath = PyUnicode_DecodeFSDefault((char *)this->getScriptsPath().c_str());
+	PyList_Insert(sysPath, 0, pPath);
+	// Remove temp object
+	Py_CLEAR(pPath);
+
+	// Check first we have a Python script to load
+	if (this->getScriptName().empty())
+	{
+		// Force disable
+		this->disableDelivery();
+	}
+
+	// Configure plugin
+	this->lock();
+	bool ret = this->configure();
+	this->unlock();
+
+	PyGILState_Release(state); // release GIL
 
 	return ret;
 }
@@ -403,34 +505,85 @@ bool NotifyPython35::notify(const std::string& deliveryName,
  */
 void NotifyPython35::logErrorMessage()
 {
-        //Get error message
-        PyObject *pType, *pValue, *pTraceback;
-        PyErr_Fetch(&pType, &pValue, &pTraceback);
-        PyErr_NormalizeException(&pType, &pValue, &pTraceback);
+	if (PyErr_Occurred())
+	{
+		// Get error message
+		PyObject *ptype, *pvalue, *ptraceback;
+		PyErr_Fetch(&ptype, &pvalue, &ptraceback);
+		PyErr_NormalizeException(&ptype,&pvalue,&ptraceback);
 
-        PyObject* str_exc_value = PyObject_Repr(pValue);
-        PyObject* pyExcValueStr = PyUnicode_AsEncodedString(str_exc_value, "utf-8", "Error ~");
+		char *msg, *file, *text;
+		int line, offset;
 
-        // NOTE from :
-        // https://docs.python.org/2/c-api/exceptions.html
-        //
-        // The value and traceback object may be NULL
-        // even when the type object is not.    
-        const char* pErrorMessage = pValue ?
-                                    PyBytes_AsString(pyExcValueStr) :
-                                    "no error description.";
+		int res = PyArg_ParseTuple(pvalue,"s(siis)",&msg,&file,&line,&offset,&text);
 
-        Logger::getLogger()->fatal("Notification plugin '%s', Error '%s'",
-                                   PLUGIN_NAME,
-                                   pErrorMessage);
+		PyObject *line_no = PyObject_GetAttrString(pvalue,"lineno");
+		PyObject *line_no_str = PyObject_Str(line_no);
+		PyObject *line_no_unicode = PyUnicode_AsEncodedString(line_no_str,"utf-8", "Error");
+		char *actual_line_no = PyBytes_AsString(line_no_unicode);  // Line number
 
-        // Reset error
-        PyErr_Clear();
+		PyObject *ptext = PyObject_GetAttrString(pvalue,"text");
+		PyObject *ptext_str = PyObject_Str(ptext);
+		PyObject *ptext_no_unicode = PyUnicode_AsEncodedString(ptext_str,"utf-8", "Error");
+		char *error_line = PyBytes_AsString(ptext_no_unicode);  // Line in error
 
-        // Remove references
-        Py_CLEAR(pType);
-        Py_CLEAR(pValue);
-        Py_CLEAR(pTraceback);
-        Py_CLEAR(str_exc_value);
-        Py_CLEAR(pyExcValueStr);
+		// Remove the trailing newline from the string
+		char *newline = rindex(error_line,  '\n');
+		if (newline)
+		{
+			*newline = '\0';
+		}
+
+		// Not managed to find a way to get the actual error message from Python
+		// so use the string representation of the Error class and tidy it up, e.g.
+		// SyntaxError('invalid syntax', ('/tmp/scripts/test_addition_script_script.py', 9, 1, ')\n')
+		PyObject *pstr = PyObject_Repr(pvalue);
+		PyObject *perr = PyUnicode_AsEncodedString(pstr, "utf-8", "Error");
+		char *err_msg = PyBytes_AsString(perr);
+		char *end = index(err_msg, ',');
+		if (end)
+		{
+			*end = '\0';
+		}
+		end = index(err_msg, '(');
+		if (end)
+		{
+			*end = ' ';
+		}
+
+		if (error_line == NULL ||
+		    actual_line_no == NULL ||
+		    strcmp(error_line, "<NULL>") == 0 ||
+		    strcmp(actual_line_no, "<NULL>") == 0)
+		{
+			m_logger->error("Python error: %s in supplied script '%s'",
+					err_msg,
+					m_pythonScript.c_str());
+		}
+		else
+		{
+			m_logger->error("Python error: %s in %s at line %s of supplied script '%s'",
+					err_msg,
+					error_line,
+					actual_line_no,
+					m_pythonScript.c_str());
+		}
+
+		// Reset error
+		PyErr_Clear();
+
+		// Remove objects
+		Py_CLEAR(line_no);
+		Py_CLEAR(line_no_str);
+		Py_CLEAR(line_no_unicode);
+		Py_CLEAR(ptext);
+		Py_CLEAR(ptext_str);
+		Py_CLEAR(ptext_no_unicode);
+		Py_CLEAR(pstr);
+		Py_CLEAR(perr);
+
+		Py_CLEAR(ptype);
+		Py_CLEAR(pvalue);
+		Py_CLEAR(ptraceback);
+	}
 }

@@ -22,6 +22,10 @@
 // Relative path to FLEDGE_DATA
 #define PYTHON_FILTERS_PATH "/scripts"
 
+// Maximum number of error messages to skip in notify method
+// When max is reached a log messages will be added and counter is rest
+#define MAX_ERRORS_COUNT 100
+
 /**
  * NotifyPython35 handles plugin configuration and Python objects
  */
@@ -56,16 +60,15 @@ class NotifyPython35
 		void	lock() { m_configMutex.lock(); };
 		void	unlock() { m_configMutex.unlock(); };
 		void	logErrorMessage();
+		void	shutdown();
+		bool	init();
 		
-	public:
+	private:
 		// Python 3.5 loaded filter module handle
 		PyObject*	m_pModule;
 		// Python 3.5 callable method handle
 		PyObject*	m_pFunc;
-		// Python interpreter has been started by this plugin
-		bool		m_init;
-
-	private:
+		// Plugin is enabled
 		bool		m_enabled;
 		// Python 3.5  script name
 		std::string	m_pythonScript;
@@ -75,5 +78,9 @@ class NotifyPython35
 		std::string	m_name;
 		// Configuration lock
 		std::mutex	m_configMutex;
+		// Logger
+		Logger		*m_logger;
+		bool		m_failedScript;
+		int		m_execCount;
 };
 #endif
