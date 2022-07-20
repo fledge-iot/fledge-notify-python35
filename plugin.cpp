@@ -104,57 +104,18 @@ PLUGIN_HANDLE plugin_init(ConfigCategory* config)
 	// Instantiate plugin class
 	NotifyPython35* notify = new NotifyPython35(config);
 
-	// Embedded Python 3.5 program name
-	wchar_t *programName = Py_DecodeLocale(config->getName().c_str(), NULL);
-        Py_SetProgramName(programName);
-	PyMem_RawFree(programName);
-
-
-	// Embedded Python 3.5 initialisation
-	PythonRuntime::getPythonRuntime();
-
-	PyGILState_STATE state = PyGILState_Ensure(); // acquire GIL
-
-	// Add scripts dir: pass Fledge Data dir
-	notify->setScriptsPath(getDataDir());
-
-	// Set Python path for embedded Python 3.5
-	// Get current sys.path. borrowed reference
-	PyObject* sysPath = PySys_GetObject((char *)string("path").c_str());
-	// Add Fledge python scripts path
-	PyObject* pPath = PyUnicode_DecodeFSDefault((char *)notify->getScriptsPath().c_str());
-	PyList_Insert(sysPath, 0, pPath);
-	// Remove temp object
-	Py_CLEAR(pPath);
-
-	// Check first we have a Python script to load
-	if (notify->getScriptName().empty())
-	{
-		// Force disable
-		notify->disableDelivery();
-	}
-
-	// Configure plugin
-	notify->lock();
-	bool ret = notify->configure();
-	notify->unlock();
+	// Initialise plugin and Python interpreter
+	bool ret = notify->init();
 
 	if (!ret)
 	{
-		// Cleanup Python 3.5
-		if (notify->m_init)
-		{
-			notify->m_init = false;
-		}
-
 		// Free object
 		delete notify;
+		notify = NULL;
 	}
 
-	PyGILState_Release(state); // release GIL
-
 	// Return plugin handle: NULL will abort the plugin init
-	return ret ? (PLUGIN_HANDLE)notify : NULL;
+	return (PLUGIN_HANDLE)notify;
 }
 
 /**
@@ -198,16 +159,8 @@ void plugin_shutdown(PLUGIN_HANDLE *handle)
 {
 	NotifyPython35* notify = (NotifyPython35 *) handle;
 
-	PyGILState_STATE state = PyGILState_Ensure();
-
-	// Decrement pModule reference count
-	Py_CLEAR(notify->m_pModule);
-	// Decrement pFunc reference count
-	Py_CLEAR(notify->m_pFunc);
-
-	PyGILState_Release(state); // release GIL
-
-	notify->m_init = false;
+	// Plugin cleanup
+	notify->shutdown();
 
 	// Cleanup memory
 	delete notify;
