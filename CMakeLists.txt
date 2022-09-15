@@ -90,8 +90,6 @@ if(${CMAKE_VERSION} VERSION_LESS "3.12.0")
 else()
 	set(PY_LIB "${Python_LIBRARIES}")
 endif()
-add_definitions(-DPLUGIN_PYTHON_SHARED_LIBRARY=${PY_LIB})
-message(STATUS "Setting -DPYTHON_SHARED_LIBRARY=${PY_LIB} for ${CMAKE_SYSTEM} on ${RELEASE_CODENAME}")
 
 if(${CMAKE_VERSION} VERSION_LESS "3.12.0") 
     link_directories(${PYTHON_LIBRARY_DIRS})
